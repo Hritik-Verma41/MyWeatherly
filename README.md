@@ -1,6 +1,6 @@
 # weather_app
 
-A new Flutter project.
+A Flutter project app that shows the current weather and weather forecasts for different cities.
 
 ## Getting Started
 
