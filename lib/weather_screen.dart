@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:intl/intl.dart';
+import 'package:weather_app/exceptions/weather_expection.dart';
 import 'package:weather_app/utils/weather_icon_mapper.dart';
 import 'package:weather_app/widgets/additional_info_item.dart';
 import 'package:weather_app/widgets/hourly_forecast_item.dart';
@@ -53,6 +54,11 @@ class _WeatherScreenState extends State<WeatherScreen> {
 
     try {
       final response = await http.get(Uri.parse(url));
+
+      if (response.statusCode != 200) {
+        throw WeatherException(response.statusCode);
+      }
+
       final data = jsonDecode(response.body);
 
       setState(() {
@@ -73,19 +79,21 @@ class _WeatherScreenState extends State<WeatherScreen> {
 
     try {
       final response = await http.get(Uri.parse(url));
-      final data = jsonDecode(response.body);
-
-      if (int.parse(data['cod']) != 200) {
-        throw 'An unexpected error occured';
+      if (response.statusCode == 404) {
+        throw WeatherException(404);
       }
-
+      if (response.statusCode != 200) {
+        throw WeatherException(response.statusCode);
+      }
+      final data = jsonDecode(response.body);
       return data;
     } catch (err) {
-      throw err.toString();
+      rethrow;
     }
   }
 
   void _selectCity(city) {
+    _debounce?.cancel();
     _searchTextEditingController.text = '';
     FocusScope.of(context).unfocus();
     setState(() {
@@ -146,7 +154,13 @@ class _WeatherScreenState extends State<WeatherScreen> {
                   ),
                   onChanged: _onSearchChanged,
                   onSubmitted: (value) {
-                    _selectCity(value);
+                    if (value.trim().isNotEmpty) {
+                      _debounce?.cancel();
+                      setState(() {
+                        _citySuggestions.clear();
+                      });
+                      _selectCity(value);
+                    }
                   },
                 ),
               ),
@@ -161,7 +175,37 @@ class _WeatherScreenState extends State<WeatherScreen> {
                     }
 
                     if (snapshot.hasError) {
-                      return Text(snapshot.error.toString());
+                      final error = snapshot.error;
+                      if (error is WeatherException &&
+                          error.statusCode == 404) {
+                        return const Center(
+                          child: Text(
+                            'Weather not found.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 18,
+                              color: Colors.orangeAccent,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        );
+                      }
+                      if (error is WeatherException) {
+                        return Center(
+                          child: Text(
+                            'Could not fetch weather data\nServer Error: ${error.statusCode}',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(color: Colors.orangeAccent),
+                          ),
+                        );
+                      }
+                      return const Center(
+                        child: Text(
+                          'Could not fetch weather data.\n Some error occured.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.redAccent),
+                        ),
+                      );
                     }
 
                     final data = snapshot.data!;
@@ -257,7 +301,9 @@ class _WeatherScreenState extends State<WeatherScreen> {
                             height: 131,
                             child: ListView.builder(
                               scrollDirection: Axis.horizontal,
-                              itemCount: data['list'].length - 1,
+                              itemCount: data['list'].length > 1
+                                  ? data['list'].length - 1
+                                  : 0,
                               itemBuilder: (context, index) {
                                 final hourlyForecastTime = DateTime.parse(
                                   data['list'][index + 1]['dt_txt'],
@@ -321,35 +367,34 @@ class _WeatherScreenState extends State<WeatherScreen> {
           ),
           // show the list of all the cities
           if (_citySuggestions.isNotEmpty)
-            if (_citySuggestions.isNotEmpty)
-              Positioned(
-                left: 16,
-                right: 16,
-                top: 78, // adjust this depending on AppBar height
-                child: Material(
-                  elevation: 6,
-                  borderRadius: BorderRadius.circular(8),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).cardColor,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: _citySuggestions.length,
-                      itemBuilder: (context, index) {
-                        final city = _citySuggestions[index];
-                        final name = city['name'];
-                        final country = city['country'];
-                        return ListTile(
-                          title: Text('$name, $country'),
-                          onTap: () => _selectCity(name),
-                        );
-                      },
-                    ),
+            Positioned(
+              left: 16,
+              right: 16,
+              top: kToolbarHeight + 12,
+              child: Material(
+                elevation: 6,
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).cardColor,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: _citySuggestions.length,
+                    itemBuilder: (context, index) {
+                      final city = _citySuggestions[index];
+                      final name = city['name'];
+                      final country = city['country'];
+                      return ListTile(
+                        title: Text('$name, $country'),
+                        onTap: () => _selectCity('$name,$country'),
+                      );
+                    },
                   ),
                 ),
               ),
+            ),
         ],
       ),
     );
