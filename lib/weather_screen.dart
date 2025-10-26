@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:ui';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -18,27 +19,60 @@ class WeatherScreen extends StatefulWidget {
 }
 
 class _WeatherScreenState extends State<WeatherScreen> {
+  final _searchTextEditingController = TextEditingController();
+  Timer? _debounce;
+
+  String _city = 'Pune';
   late Future<Map<String, dynamic>> weather;
+  List<dynamic> _citySuggestions = [];
 
   @override
   void initState() {
     super.initState();
-    weather = getCurrentWeather();
+    weather = getCurrentWeather(_city);
   }
 
-  Future<Map<String, dynamic>> getCurrentWeather() async {
-    try {
-      String cityName = 'Pune';
-      String openWeatherApiKey = dotenv.get(
-        'OPEN_WEATHER_API_KEY',
-        fallback: 'no-key',
-      );
-      final response = await http.get(
-        Uri.parse(
-          'https://api.openweathermap.org/data/2.5/forecast?q=$cityName&appid=$openWeatherApiKey&units=metric',
-        ),
-      );
+  void _onSearchChanged(String query) {
+    if (_debounce?.isActive ?? false) _debounce?.cancel();
 
+    _debounce = Timer(const Duration(milliseconds: 600), () {
+      if (query.trim().isNotEmpty) {
+        _fetchCitySuggestions(query.trim());
+      } else {
+        setState(() {
+          _citySuggestions.clear();
+        });
+      }
+    });
+  }
+
+  Future<void> _fetchCitySuggestions(String query) async {
+    final apiKey = dotenv.get('OPEN_WEATHER_API_KEY', fallback: 'no-key');
+    final url =
+        'https://api.openweathermap.org/geo/1.0/direct?q=$query&limit=5&appid=$apiKey';
+
+    try {
+      final response = await http.get(Uri.parse(url));
+      final data = jsonDecode(response.body);
+
+      setState(() {
+        _citySuggestions = data;
+      });
+    } catch (err) {
+      throw err.toString();
+    }
+  }
+
+  Future<Map<String, dynamic>> getCurrentWeather(String city) async {
+    String openWeatherApiKey = dotenv.get(
+      'OPEN_WEATHER_API_KEY',
+      fallback: 'no-key',
+    );
+    String url =
+        'https://api.openweathermap.org/data/2.5/forecast?q=$city&appid=$openWeatherApiKey&units=metric';
+
+    try {
+      final response = await http.get(Uri.parse(url));
       final data = jsonDecode(response.body);
 
       if (int.parse(data['cod']) != 200) {
@@ -49,6 +83,23 @@ class _WeatherScreenState extends State<WeatherScreen> {
     } catch (err) {
       throw err.toString();
     }
+  }
+
+  void _selectCity(city) {
+    _searchTextEditingController.text = '';
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _citySuggestions.clear();
+      _city = city;
+      weather = getCurrentWeather(city);
+    });
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _searchTextEditingController.dispose();
+    super.dispose();
   }
 
   @override
@@ -68,157 +119,238 @@ class _WeatherScreenState extends State<WeatherScreen> {
           IconButton(
             onPressed: () {
               setState(() {
-                weather = getCurrentWeather();
+                weather = getCurrentWeather(_city);
               });
             },
             icon: const Icon(Icons.refresh),
           ),
         ],
       ),
-      body: FutureBuilder(
-        future: weather,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator.adaptive());
-          }
-
-          if (snapshot.hasError) {
-            return Text(snapshot.error.toString());
-          }
-
-          final data = snapshot.data!;
-
-          final currentCity = data['city']['name'];
-          final currentCountryCode = data['city']['country'];
-          final currentTemp = data['list'][0]['main']['temp'];
-          final currentWeatherId = data['list'][0]['weather'][0]['id'];
-          final currentWeatherDescription =
-              data['list'][0]['weather'][0]['description']
-                  .split(' ')
-                  .map(
-                    (w) => w.isEmpty
-                        ? ''
-                        : '${w[0].toUpperCase()}${w.substring(1).toLowerCase()}',
-                  )
-                  .join(' ');
-          final currentWeatherHumidity = data['list'][0]['main']['humidity']
-              .toString();
-          final currentWeatherWindSpeed = data['list'][0]['wind']['speed']
-              .toString();
-          final currentWeatherPressure = data['list'][0]['main']['pressure']
-              .toString();
-
-          return Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // main card
-                SizedBox(
-                  width: double.infinity,
-                  child: Card(
-                    elevation: 10,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
+      body: Stack(
+        children: [
+          Column(
+            children: [
+              // Searchbar for weather search by city
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                child: TextField(
+                  controller: _searchTextEditingController,
+                  textInputAction: TextInputAction.search,
+                  decoration: InputDecoration(
+                    hintText: 'Search city...',
+                    prefixIcon: const Icon(Icons.search),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                        child: Padding(
-                          padding: const EdgeInsets.all(16.0),
-                          child: Column(
+                    filled: true,
+                  ),
+                  onChanged: _onSearchChanged,
+                  onSubmitted: (value) {
+                    _selectCity(value);
+                  },
+                ),
+              ),
+              Expanded(
+                child: FutureBuilder(
+                  future: weather,
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(
+                        child: CircularProgressIndicator.adaptive(),
+                      );
+                    }
+
+                    if (snapshot.hasError) {
+                      return Text(snapshot.error.toString());
+                    }
+
+                    final data = snapshot.data!;
+
+                    final currentCity = data['city']['name'];
+                    final currentCountryCode = data['city']['country'];
+                    final currentTemp = data['list'][0]['main']['temp'];
+                    final currentWeatherId =
+                        data['list'][0]['weather'][0]['id'];
+                    final currentWeatherDescription =
+                        data['list'][0]['weather'][0]['description']
+                            .split(' ')
+                            .map(
+                              (w) => w.isEmpty
+                                  ? ''
+                                  : '${w[0].toUpperCase()}${w.substring(1).toLowerCase()}',
+                            )
+                            .join(' ');
+                    final currentWeatherHumidity =
+                        data['list'][0]['main']['humidity'].toString();
+                    final currentWeatherWindSpeed =
+                        data['list'][0]['wind']['speed'].toString();
+                    final currentWeatherPressure =
+                        data['list'][0]['main']['pressure'].toString();
+
+                    return Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // main card
+                          SizedBox(
+                            width: double.infinity,
+                            child: Card(
+                              elevation: 10,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(16),
+                                child: BackdropFilter(
+                                  filter: ImageFilter.blur(
+                                    sigmaX: 10,
+                                    sigmaY: 10,
+                                  ),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(16.0),
+                                    child: Column(
+                                      children: [
+                                        Text(
+                                          '$currentTemp°C',
+                                          style: const TextStyle(
+                                            fontSize: 32,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          '$currentCity, $currentCountryCode',
+                                          style: const TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 12),
+                                        Icon(
+                                          getWeatherIcon(currentWeatherId),
+                                          size: 64,
+                                        ),
+                                        const SizedBox(height: 16),
+                                        Text(
+                                          currentWeatherDescription,
+                                          style: const TextStyle(fontSize: 20),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          // weather forecast cards
+                          const Text(
+                            'Hourly Forecast',
+                            style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            height: 131,
+                            child: ListView.builder(
+                              scrollDirection: Axis.horizontal,
+                              itemCount: data['list'].length - 1,
+                              itemBuilder: (context, index) {
+                                final hourlyForecastTime = DateTime.parse(
+                                  data['list'][index + 1]['dt_txt'],
+                                );
+                                final hourlyForecastWeatherId =
+                                    data['list'][index + 1]['weather'][0]['id'];
+                                final hourlyForecastTemprature =
+                                    data['list'][index + 1]['main']['temp']
+                                        .toString();
+
+                                return HourlyForecastItem(
+                                  time: DateFormat.Hm().format(
+                                    hourlyForecastTime,
+                                  ),
+                                  date: DateFormat(
+                                    'd MMM',
+                                  ).format(hourlyForecastTime),
+                                  icon: getWeatherIcon(hourlyForecastWeatherId),
+                                  temprature: hourlyForecastTemprature,
+                                );
+                              },
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          // additional information
+                          const Text(
+                            'Additional Information',
+                            style: TextStyle(
+                              fontSize: 25,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceAround,
                             children: [
-                              Text(
-                                '$currentTemp°C',
-                                style: const TextStyle(
-                                  fontSize: 32,
-                                  fontWeight: FontWeight.bold,
-                                ),
+                              AdditionalInfoItem(
+                                icon: WeatherIcons.humidity,
+                                label: 'Humidity',
+                                value: '$currentWeatherHumidity%',
                               ),
-                              const SizedBox(height: 4),
-                              Text(
-                                '$currentCity, $currentCountryCode',
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w600,
-                                ),
+                              AdditionalInfoItem(
+                                icon: WeatherIcons.wind,
+                                label: 'Wind Speed',
+                                value: '$currentWeatherWindSpeed kph',
                               ),
-                              const SizedBox(height: 12),
-                              Icon(getWeatherIcon(currentWeatherId), size: 64),
-                              const SizedBox(height: 16),
-                              Text(
-                                currentWeatherDescription,
-                                style: const TextStyle(fontSize: 20),
+                              AdditionalInfoItem(
+                                icon: WeatherIcons.barometer,
+                                label: 'Pressure',
+                                value: '$currentWeatherPressure hPA',
                               ),
                             ],
                           ),
-                        ),
+                        ],
                       ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+          // show the list of all the cities
+          if (_citySuggestions.isNotEmpty)
+            if (_citySuggestions.isNotEmpty)
+              Positioned(
+                left: 16,
+                right: 16,
+                top: 78, // adjust this depending on AppBar height
+                child: Material(
+                  elevation: 6,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).cardColor,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: _citySuggestions.length,
+                      itemBuilder: (context, index) {
+                        final city = _citySuggestions[index];
+                        final name = city['name'];
+                        final country = city['country'];
+                        return ListTile(
+                          title: Text('$name, $country'),
+                          onTap: () => _selectCity(name),
+                        );
+                      },
                     ),
                   ),
                 ),
-                const SizedBox(height: 20),
-                // weather forecast cards
-                const Text(
-                  'Hourly Forecast',
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  height: 131,
-                  child: ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: data['list'].length - 1,
-                    itemBuilder: (context, index) {
-                      final hourlyForecastTime = DateTime.parse(
-                        data['list'][index + 1]['dt_txt'],
-                      );
-                      final hourlyForecastWeatherId =
-                          data['list'][index + 1]['weather'][0]['id'];
-                      final hourlyForecastTemprature =
-                          data['list'][index + 1]['main']['temp'].toString();
-
-                      return HourlyForecastItem(
-                        time: DateFormat.Hm().format(hourlyForecastTime),
-                        date: DateFormat('d MMM').format(hourlyForecastTime),
-                        icon: getWeatherIcon(hourlyForecastWeatherId),
-                        temprature: hourlyForecastTemprature,
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 20),
-                // additional information
-                const Text(
-                  'Additional Information',
-                  style: TextStyle(fontSize: 25, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                    AdditionalInfoItem(
-                      icon: WeatherIcons.humidity,
-                      label: 'Humidity',
-                      value: '$currentWeatherHumidity%',
-                    ),
-                    AdditionalInfoItem(
-                      icon: WeatherIcons.wind,
-                      label: 'Wind Speed',
-                      value: '$currentWeatherWindSpeed kph',
-                    ),
-                    AdditionalInfoItem(
-                      icon: WeatherIcons.barometer,
-                      label: 'Pressure',
-                      value: '$currentWeatherPressure hPA',
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          );
-        },
+              ),
+        ],
       ),
     );
   }
