@@ -92,7 +92,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
     }
   }
 
-  void _selectCity(city) {
+  void _selectCity(String city) {
     _debounce?.cancel();
     _searchTextEditingController.text = '';
     FocusScope.of(context).unfocus();
@@ -119,7 +119,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
           children: [
             Icon(WeatherIcons.sunrise),
             SizedBox(width: 10),
-            Text('Weather App', style: TextStyle(fontWeight: FontWeight.bold)),
+            Text('MyWeatherly', style: TextStyle(fontWeight: FontWeight.bold)),
           ],
         ),
         centerTitle: true,
