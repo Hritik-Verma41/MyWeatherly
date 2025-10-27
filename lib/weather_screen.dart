@@ -4,6 +4,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:geocoding/geocoding.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
 import 'package:weather_app/exceptions/weather_expection.dart';
 import 'package:weather_app/utils/weather_icon_mapper.dart';
@@ -23,14 +25,93 @@ class _WeatherScreenState extends State<WeatherScreen> {
   final _searchTextEditingController = TextEditingController();
   Timer? _debounce;
 
-  String _city = 'Pune';
-  late Future<Map<String, dynamic>> weather;
+  String _city = 'Patna';
+  Future<Map<String, dynamic>>? weather;
   List<dynamic> _citySuggestions = [];
 
   @override
   void initState() {
     super.initState();
-    weather = getCurrentWeather(_city);
+    _determinePositionAndSetCity();
+  }
+
+  Future<void> _determinePositionAndSetCity() async {
+    try {
+      bool serviceEnabled;
+      LocationPermission permission;
+
+      // -> Check if location services are enabled
+      serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        debugPrint('Location services are disabled.');
+        setState(() {
+          _loadDefaultCity();
+        });
+        return;
+      }
+
+      // -> Check for permissions
+      permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          debugPrint('Location permissions are denied.');
+          setState(() {
+            _loadDefaultCity();
+          });
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        debugPrint('Location permissions are permanently denied.');
+        setState(() {
+          _loadDefaultCity();
+        });
+        return;
+      }
+
+      // -> Timeour to prevent infinite wait
+      // -> Fetch city if location services and permissions are enabled
+      final position =
+          await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.high,
+          ).timeout(
+            const Duration(seconds: 10),
+            onTimeout: () {
+              debugPrint('Location fetch timed out');
+              throw TimeoutException('Location fetch timeout');
+            },
+          );
+
+      final placemarks = await placemarkFromCoordinates(
+        position.latitude,
+        position.longitude,
+      );
+
+      if (placemarks.isNotEmpty) {
+        final place = placemarks.first;
+        final cityName =
+            place.locality ?? place.subAdministrativeArea ?? 'Patna';
+        debugPrint('Detected city: $cityName');
+
+        setState(() {
+          _city = cityName;
+          weather = getCurrentWeather(_city);
+        });
+      } else {
+        setState(() {
+          weather = getCurrentWeather(_city);
+        });
+      }
+    } catch (e) {
+      debugPrint('Error getting location: $e');
+      _loadDefaultCity();
+    }
+  }
+
+  void _loadDefaultCity() {
+    weather = getCurrentWeather('Patna');
   }
 
   void _onSearchChanged(String query) {
@@ -112,6 +193,12 @@ class _WeatherScreenState extends State<WeatherScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (weather == null) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator.adaptive()),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Row(
