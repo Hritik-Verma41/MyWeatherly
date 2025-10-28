@@ -1,4 +1,4 @@
-# weather_app
+# MyWeatherly
 
 A Flutter project app that shows the current weather and weather forecasts for different cities.
 
