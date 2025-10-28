@@ -2,11 +2,13 @@ import 'dart:convert';
 import 'dart:ui';
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:weather_app/exceptions/weather_expection.dart';
 import 'package:weather_app/utils/weather_icon_mapper.dart';
 import 'package:weather_app/widgets/additional_info_item.dart';
@@ -193,6 +195,8 @@ class _WeatherScreenState extends State<WeatherScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     if (weather == null) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator.adaptive()),
@@ -483,6 +487,44 @@ class _WeatherScreenState extends State<WeatherScreen> {
               ),
             ),
         ],
+      ),
+
+      bottomNavigationBar: Container(
+        color: isDark ? Colors.white : Colors.black,
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            RichText(
+              text: TextSpan(
+                text: 'Developed by ',
+                style: TextStyle(color: isDark ? Colors.black : Colors.white),
+                children: [
+                  TextSpan(
+                    text: 'Hritik Verma',
+                    style: TextStyle(
+                      color: isDark ? Colors.blue[700] : Colors.blue[300],
+                      decoration: TextDecoration.underline,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    recognizer: TapGestureRecognizer()
+                      ..onTap = () async {
+                        final Uri url = Uri.parse(
+                          'https://www.linkedin.com/in/hritikverma41/',
+                        );
+                        if (await canLaunchUrl(url)) {
+                          await launchUrl(
+                            url,
+                            mode: LaunchMode.externalApplication,
+                          );
+                        }
+                      },
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
